@@ -127,6 +127,8 @@ public class SnowpipeRestRepository {
         // Replay logs, if enabled
         try {
             if (0 != wal_enable) {
+                File wdir = new File(wal_dir);
+                wdir.mkdirs();
                 replay_if_needed();
                 next_wal_writer();
             }
