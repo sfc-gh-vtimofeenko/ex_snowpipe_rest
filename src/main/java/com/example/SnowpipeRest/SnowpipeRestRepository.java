@@ -209,7 +209,7 @@ public class SnowpipeRestRepository {
         int idx = 0;
 
         try {
-            BufferedReader wal_reader = new BufferedReader(new FileReader(new File(fname)));
+            BufferedReader wal_reader = new BufferedReader(new FileReader(new File(wal_dir, fname)));
             wal_fname = fname;
             cur_row = 0;
             for (int i = 0; i < offset; i++) {
@@ -219,13 +219,13 @@ public class SnowpipeRestRepository {
             // for rows in fname starting at row
             while ((line = wal_reader.readLine()) != null) {
                 //   make chunks of rows and insert
-                sb.append(line).append(",");
+                sb.append((0 == idx) ? "" : ",").append(line);
                 idx++;
                 if (idx > replay_chunk_size) {
                     // save rows
                     sb.append("]");
                     SnowpipeInsertResponse sir = saveToSnowflake(sb.toString(), 0);
-                    logger.info(sir.toString());        
+                    logger.info(String.format("replay_file: %s", sir.toString()));
 
                     // reset
                     idx = 0;
@@ -236,7 +236,7 @@ public class SnowpipeRestRepository {
                 // save rows
                 sb.append("]");
                 SnowpipeInsertResponse sir = saveToSnowflake(sb.toString(), 0);
-                logger.info(sir.toString());        
+                logger.info(String.format("replay_file: %s", sir.toString()));        
 
                 // reset
                 idx = 0;
@@ -245,7 +245,7 @@ public class SnowpipeRestRepository {
             wal_reader.close();
         }
         catch (IOException ioe) {
-
+            ioe.printStackTrace();
         }
     }
 
@@ -255,6 +255,7 @@ public class SnowpipeRestRepository {
         if ((null == last_offset) || (0 == last_offset.length()))
             // Nothing to do
             return;
+        logger.info(String.format("replay_if_needed: last_offset: '%s'", last_offset));
         String fname = token_to_fname(last_offset);
         int row = token_to_row(last_offset) + 1;
 
@@ -262,8 +263,9 @@ public class SnowpipeRestRepository {
         replay_file(fname, row);
 
         // for all files "later" than fname
-        int fname_idx = Integer.parseInt(fname.substring(wal_prefix.length() + 1));
+        int fname_idx = Integer.parseInt(fname.substring(wal_prefix.length()));
         List<String> wal_fnames = get_wal_files(fname_idx);
+        logger.info(String.format("replay_if_needed: replaying later files: %s", wal_fnames));
         //   Replay full file
         wal_fnames.stream().forEachOrdered(f -> replay_file(f, 0));
 

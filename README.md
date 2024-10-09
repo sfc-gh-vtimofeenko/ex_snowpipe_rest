@@ -192,3 +192,38 @@ Expected response:
 ```
 400 BAD_REQUEST "Unable to parse body as list of JSON strings."
 ```
+
+## Fault Tolerance
+There is some basic fault tolerance that has been implemented. 
+All records that are received are written to a write ahead log (WAL)
+before also being send to Snowflake over the Snowpipe Streaming
+SDK. 
+
+The offset that is used when sending to Snowflake over the Snowpipe
+Streaming SDK is a concatenation of the WAL filename and the row
+in the WAL (e.g., `file_0000000007:3`). In this way, we can get the
+last committed offset from Snowflake and be able to determine 2 things:
+* what messages still need to be sent to Snowflake, and we can replay them
+* which files are no longer needed since all records have been sent, and we can purge them
+
+This mechanism protects against some faults, but is not 100% fault
+tolerant. Specifically, if the program exits prematurely, but the directory
+with the WAL files is still accessible, the program can be restarted 
+(on the same machine, or on a machine that can mount the WAL directory)
+and replay any unsent records. 
+
+However, if the directory of WAL files is unavailable, the unsent records
+in those files will not be sent and will be missed. Specifically, this approach
+does _not_ try to put the WAL files in a fault-tolerant file system or other
+approaches (e.g., RAFT).
+
+By default, all writes to the WAL are followed by an explicit `flush()`
+call. This adds latency, but also adds safety. To go a little riskier, but
+faster, you can set the `snowpiperest.wal.flush` parameter to `0`.
+
+You can completely disable the WAL logic (going even faster, but even riskier)
+by setting the `snowpiperest.wal.enable` parameter to `0`.
+
+You can set the directory into which all WAL files will be written by setting
+the `snowpiperest.wal.dir` parameter. It defaults to the `wal` subdirectory
+in the current working directory.
