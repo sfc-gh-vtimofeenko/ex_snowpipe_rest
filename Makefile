@@ -5,6 +5,9 @@ help:           ## Show this help.
 build:          ## Build the Spring Boot application
 	mvn clean package
 
+run_java:       ## Run locally with Java
+	java -jar target/SnowpipeRest-0.0.1-SNAPSHOT.jar
+
 run:            ## Start the Docker image
 	docker compose up
 
