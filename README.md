@@ -44,6 +44,9 @@ You need to specify a few parameters to run:
 * `snowpipe.database` - the name of the database to insert data into
 * `snowpipe.schema` - the name of the schema in the database to insert data into
 * `snowpipe.table` - the name of the table in the schema to insert data into
+* `snowpiperest.wal.enable`- whether to log to WAL (set to `1`) or not (set to `0`)
+* `snowpiperest.wal.dir` - the directory to use for the WAL files (defaults to the subdirectory `wal` in the current directory)
+* `snowpiperest.wal.flush`- whether to log to force flush WAL on every write (set to `1`) or not (set to `0`)
 
 You can set these by environment variable, as well:
 * `SNOWFLAKE_URL` for `snowflake.url`
@@ -54,6 +57,9 @@ You can set these by environment variable, as well:
 * `SNOWPIPE_DATABASE` for `snowpipe.database`
 * `SNOWPIPE_SCHEMA` for `snowpipe.schema`
 * `SNOWPIPE_TABLE` for `snowpipe.table`
+* `SNOWPIPEREST_WAL_ENABLE` for `snowpiperest.wal.enable`
+* `SNOWPIPEREST_WAL_DIR` for `snowpiperest.wal.dir`
+* `SNOWPIPEREST_WAL_FLUSH` for `snowpiperest.wal.flush`
 
 From the commandline run:
 ```bash
@@ -65,7 +71,10 @@ java -jar target/SnowpipeRest-0.0.1-SNAPSHOT.jar \
   --snowpipe.name="<UNIQUE NAME>" \
   --snowpipe.database="<DATABASE NAME>" \
   --snowpipe.schema="<SCHEMA NAME>" \
-  --snowpipe.table="<TABLE NAME>"
+  --snowpipe.table="<TABLE NAME>" \
+  --snowpiperest.wal.enable=1 \
+  --snowpiperest.wal.dir=wal \
+  --snowpiperest.wal.flush=1
 ```
 
 Alternatively, you can edit the `src/main/resources/application.properties` and add
@@ -92,7 +101,10 @@ docker run -p 8080:8080 snowpiperest \
   --snowpipe.name="<UNIQUE NAME>" \
   --snowpipe.database="<DATABASE NAME>" \
   --snowpipe.schema="<SCHEMA NAME>" \
-  --snowpipe.table="<TABLE NAME>"
+  --snowpipe.table="<TABLE NAME>" \
+  --snowpiperest.wal.enable=1 \
+  --snowpiperest.wal.dir=wal \
+  --snowpiperest.wal.flush=1
 ```
 
 Note, see above for the parameters.

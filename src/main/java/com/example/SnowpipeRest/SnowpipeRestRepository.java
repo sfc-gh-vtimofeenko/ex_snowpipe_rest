@@ -13,20 +13,32 @@ import net.snowflake.ingest.streaming.SnowflakeStreamingIngestClientFactory;
 
 import java.util.Map;
 import java.util.List;
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Properties;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import javax.annotation.PostConstruct;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 @Component
 public class SnowpipeRestRepository {
+    Logger logger = LoggerFactory.getLogger(SnowpipeRestRepository.class);
+
     private ObjectMapper objectMapper = new ObjectMapper();
     private SnowflakeStreamingIngestClient snowpipe_client;
     private SnowflakeStreamingIngestChannel channel;
-    private Integer insert_count;
+    private Integer insert_count = 0;
 
     @Value("${snowpipe.name}")
     private String suffix;
@@ -52,6 +64,23 @@ public class SnowpipeRestRepository {
     @Value("${snowpipe.table}")
     private String table;
 
+    @Value("${snowpiperest.wal.enable:1}")
+    private int wal_enable;
+
+    @Value("${snowpiperest.wal.flush:1}")
+    private int wal_flush;
+
+    @Value("${snowpiperest.wal.dir:wal}")
+    private String wal_dir;
+
+    private BufferedWriter wal_writer = null;
+    private String wal_prefix = "file_";
+    private int wal_index = 0;
+    private String wal_fname;
+    private char token_separator = ':';
+    private int cur_row = 0;
+    private int rows_per_file = 1000;
+    private int replay_chunk_size = 20;
 
     @PostConstruct
     private void init() {
@@ -65,7 +94,7 @@ public class SnowpipeRestRepository {
         // Connect to Snowflake with credentials.
         try {
             // Make Snowflake Streaming Ingest Client
-            this.snowpipe_client = SnowflakeStreamingIngestClientFactory.builder("SNOWPIPE_REST_CLIENT_" + this.suffix)
+            snowpipe_client = SnowflakeStreamingIngestClientFactory.builder("SNOWPIPE_REST_CLIENT_" + suffix)
                     .setProperties(props).build();
         } catch (Exception e) {
             // Handle Exception for Snowpipe Streaming objects
@@ -80,29 +109,198 @@ public class SnowpipeRestRepository {
         if (null == table)
             throw new RuntimeException("Must specify table");
         try {
-            OpenChannelRequest request1 = OpenChannelRequest.builder("SNOWPIPE_REST_CHANNEL_" + this.suffix)
+            OpenChannelRequest request1 = OpenChannelRequest.builder("SNOWPIPE_REST_CHANNEL_" + suffix)
                     .setDBName(database)
                     .setSchemaName(schema)
                     .setTableName(table)
                     .setOnErrorOption(OpenChannelRequest.OnErrorOption.CONTINUE)
                     .build();
-            this.channel = this.snowpipe_client.openChannel(request1);
-            this.insert_count = 0;
+            channel = snowpipe_client.openChannel(request1);
         } catch (Exception e) {
             // Handle Exception for Snowpipe Streaming objects
-            // throw new RuntimeException(e);
             e.printStackTrace();
             throw new SnowpipeRestTableNotFoundException(String.format("Table not found (or no permissions): %s.%s.%s", database.toUpperCase(), schema.toUpperCase(), table.toUpperCase()));
+        }
+
+        // Replay logs, if enabled
+        try {
+            if (0 != wal_enable) {
+                replay_if_needed();
+                next_wal_writer();
+            }
+        }
+        catch (Exception e) {
+            e.printStackTrace();
+            throw new RuntimeException("Error during WAL replay");
+        }
+    }
+
+    private void wait_for_flush() {
+        // If no current WAL, nothing to flush
+        if (null == wal_fname)
+            return;
+
+            int maxRetries = 20;
+        int retryCount = 0;
+        String token = makeToken(wal_fname, cur_row);
+
+        do {
+            String offsetTokenFromSnowflake = channel.getLatestCommittedOffsetToken();
+            if (offsetTokenFromSnowflake != null
+                    && offsetTokenFromSnowflake.equals(token)) {
+                System.out.println("SUCCESSFULLY inserted");
+                break;
+            } else {
+                try {
+                    Thread.sleep(1000);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+            retryCount++;
+        } while (retryCount < maxRetries);
+    }
+
+    private String makeToken(String fname, int row) {
+        return fname.concat(String.valueOf(token_separator)).concat(String.valueOf(row));
+    }
+
+    private String token_to_fname(String token) {
+        return token.substring(0, token.indexOf(token_separator));
+    }
+
+    private int token_to_row(String token) {
+        String row_str = token.substring(token.indexOf(token_separator)+1);
+        logger.info(String.format("token_to_row: '%s'", row_str));
+        // return Integer.parseInt(token.substring(token.indexOf(token_separator)+1));
+        return Integer.parseInt(row_str);
+    }
+
+    private int max_wal_index() {
+        return Stream.of(new File(wal_dir).listFiles())
+            .map(f -> f.getName().substring(wal_prefix.length() + 1))
+            .map(s -> Integer.parseInt(s))
+            .max(Integer::compare)
+            .orElse(-1);
+    }
+
+    private void next_wal_writer() throws IOException {
+        if (null != wal_writer)
+            wal_writer.close();
+        wal_index = max_wal_index() + 1;
+        wal_fname = wal_prefix.concat(String.format("%010d", wal_index));
+        wal_writer = new BufferedWriter(new FileWriter(new File(wal_dir, wal_fname)));
+        cur_row = 0;
+    }
+
+    private List<String> get_wal_files(int wal_idx) {
+        logger.info((new File(wal_dir)).listFiles().toString());
+        return Stream.of(new File(wal_dir).listFiles())
+            .map(File::getName)
+            .filter(wf -> (Integer.parseInt(wf.substring(wal_prefix.length())) > wal_idx))
+            .collect(Collectors.toList());
+    }
+
+    private void replay_file(String fname, int offset) {
+        String line;
+        StringBuffer sb = new StringBuffer("[");
+        int idx = 0;
+
+        try {
+            BufferedReader wal_reader = new BufferedReader(new FileReader(new File(fname)));
+            wal_fname = fname;
+            cur_row = 0;
+            for (int i = 0; i < offset; i++) {
+                wal_reader.readLine();
+                cur_row++;
+            }
+            // for rows in fname starting at row
+            while ((line = wal_reader.readLine()) != null) {
+                //   make chunks of rows and insert
+                sb.append(line).append(",");
+                idx++;
+                if (idx > replay_chunk_size) {
+                    // save rows
+                    sb.append("]");
+                    SnowpipeInsertResponse sir = saveToSnowflake(sb.toString(), 0);
+                    logger.info(sir.toString());        
+
+                    // reset
+                    idx = 0;
+                    sb.setLength(1);
+                }
+            }
+            if (idx > 0) {
+                // save rows
+                sb.append("]");
+                SnowpipeInsertResponse sir = saveToSnowflake(sb.toString(), 0);
+                logger.info(sir.toString());        
+
+                // reset
+                idx = 0;
+                sb.setLength(1);            
+            }
+            wal_reader.close();
+        }
+        catch (IOException ioe) {
+
+        }
+    }
+
+    private void replay_if_needed() {
+        // Get the last committed offset token
+        String last_offset = channel.getLatestCommittedOffsetToken();
+        logger.info(String.format("Replaying... last offset: %s", last_offset));
+        if ((null == last_offset) || (0 == last_offset.length()))
+            // Nothing to do
+            return;
+        String fname = token_to_fname(last_offset);
+        int row = token_to_row(last_offset) + 1;
+        logger.info(String.format("replay_if_needed: fname='%s', row=%d", fname, row));
+
+        // Replay partial file
+        replay_file(fname, row);
+
+        // for all files "later" than fname
+        logger.info(String.format("replay_if_needed: fname='%s', wal_prefix='%s'", fname, wal_prefix));
+        int fname_idx = Integer.parseInt(fname.substring(wal_prefix.length() + 1));
+        List<String> wal_fnames = get_wal_files(fname_idx);
+        //   Replay full file
+        wal_fnames.stream().forEachOrdered(f -> replay_file(f, 0));
+
+        logger.info(String.format("Replayed %d files", wal_fnames.size() + 1));
+
+        wait_for_flush();
+    }
+
+    private void write_to_log(List<Map<String,Object>> rows) {
+        try {
+            for (Map<String,Object> row : rows) {
+                wal_writer.write(objectMapper.writeValueAsString(row));
+                wal_writer.newLine();
+                cur_row += rows.size();
+                if (cur_row >= rows_per_file)
+                    next_wal_writer();
+            }
+            if (0 != wal_flush)
+                wal_writer.flush();
+        }
+        catch (IOException ioe) {
+            // Error writing to WAL
         }
     }
 
     public SnowpipeInsertResponse saveToSnowflake(String body) {
+        return saveToSnowflake(body, wal_enable);
+    }
+
+    public SnowpipeInsertResponse saveToSnowflake(String body, int write_to_wal) {
         // Parse body
         List<Object> rowStrings;
         List<Map<String,Object>> rows;
         try {
             // Parse JSON body
-            JsonNode jsonNode = this.objectMapper.readTree(body);
+            JsonNode jsonNode = objectMapper.readTree(body);
             // List of strings for error reporting
             rowStrings = objectMapper.convertValue(jsonNode, new TypeReference<List<Object>>() {});
             // List of Map<String,Object> for inserting
@@ -113,9 +311,14 @@ public class SnowpipeRestRepository {
             throw new SnowpipeRestJsonParseException("Unable to parse body as list of JSON strings.");
         }
 
+        // Write the rows to the log
+        if (0 != write_to_wal)
+            write_to_log(rows);
+
         // Issue the insert
-        String new_token = String.valueOf(this.insert_count + 1);
-        InsertValidationResponse resp = this.channel.insertRows(rows, new_token);
+        cur_row += rows.size();
+        String new_token = makeToken(wal_fname, cur_row);
+        InsertValidationResponse resp = channel.insertRows(rows, new_token);
 
         // Make response
         try {
@@ -125,7 +328,7 @@ public class SnowpipeRestRepository {
                 sp_resp.addError(idx, objectMapper.writeValueAsString(rowStrings.get(idx)), insertError.getMessage());
             }
 
-            this.insert_count++;
+            insert_count++;
             return sp_resp;
         }
         catch (JsonProcessingException je) {
@@ -145,19 +348,19 @@ public class SnowpipeRestRepository {
         }
 
         public int getRow_index() {
-            return this.row_index;
+            return row_index;
         }
 
         public String getInput() {
-            return this.input;
+            return input;
         }
 
         public String getError() {
-            return this.error;
+            return error;
         }
 
         public String toString() {
-            return String.format("{\"row_index\": \"%s\", \"input\": \"%s\", \"error\": \"%s\"}", this.row_index, this.input, this.error);
+            return String.format("{\"row_index\": \"%s\", \"input\": \"%s\", \"error\": \"%s\"}", row_index, input, error);
         }
     }
 
@@ -179,23 +382,23 @@ public class SnowpipeRestRepository {
         }
 
         public int getNum_attempted() {
-            return this.num_attempted;
+            return num_attempted;
         }
 
         public int getNum_succeeded() {
-            return this.num_succeeded;
+            return num_succeeded;
         }
 
         public int getNum_errors() {
-            return this.num_errors;
+            return num_errors;
         }
 
         public List<SnowpipeInsertError> getErrors() {
-            return this.errors;
+            return errors;
         }
 
         public SnowpipeInsertResponse addError(int row_index, String input, String error) {
-            return this.addError(new SnowpipeInsertError(row_index, input, error));
+            return addError(new SnowpipeInsertError(row_index, input, error));
         }
 
         public SnowpipeInsertResponse addError(SnowpipeInsertError e) {
@@ -207,10 +410,10 @@ public class SnowpipeRestRepository {
             StringBuffer resp_body = new StringBuffer("{\n");
             resp_body.append(String.format(
                     "  \"inserts_attempted\": %d,\n  \"inserts_succeeded\": %d,\n  \"insert_errors\": %d,\n",
-                    this.num_attempted, this.num_succeeded, this.num_errors));
+                    num_attempted, num_succeeded, num_errors));
             resp_body.append("  \"error_rows\":\n    [");
             String delim = " ";
-            for (SnowpipeInsertError e: this.errors) {
+            for (SnowpipeInsertError e: errors) {
                 resp_body.append(String.format("\n    %s %s", delim, e.toString()));
                 delim = ",";
             }
@@ -219,5 +422,7 @@ public class SnowpipeRestRepository {
             return resp_body.toString();
         }
     }
+
+
 
 }

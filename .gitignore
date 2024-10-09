@@ -1,6 +1,7 @@
 .vscode/
 target/
 */target/
+test/
 
 *.class
 *.jar
