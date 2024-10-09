@@ -12,6 +12,7 @@ import net.snowflake.ingest.streaming.SnowflakeStreamingIngestClient;
 import net.snowflake.ingest.streaming.SnowflakeStreamingIngestClientFactory;
 
 import java.util.Map;
+import java.util.Optional;
 import java.util.List;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -20,7 +21,10 @@ import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.Properties;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -171,8 +175,6 @@ public class SnowpipeRestRepository {
 
     private int token_to_row(String token) {
         String row_str = token.substring(token.indexOf(token_separator)+1);
-        logger.info(String.format("token_to_row: '%s'", row_str));
-        // return Integer.parseInt(token.substring(token.indexOf(token_separator)+1));
         return Integer.parseInt(row_str);
     }
 
@@ -191,10 +193,10 @@ public class SnowpipeRestRepository {
         wal_fname = wal_prefix.concat(String.format("%010d", wal_index));
         wal_writer = new BufferedWriter(new FileWriter(new File(wal_dir, wal_fname)));
         cur_row = 0;
+        purge_old_log_files();
     }
 
     private List<String> get_wal_files(int wal_idx) {
-        logger.info((new File(wal_dir)).listFiles().toString());
         return Stream.of(new File(wal_dir).listFiles())
             .map(File::getName)
             .filter(wf -> (Integer.parseInt(wf.substring(wal_prefix.length())) > wal_idx))
@@ -250,19 +252,16 @@ public class SnowpipeRestRepository {
     private void replay_if_needed() {
         // Get the last committed offset token
         String last_offset = channel.getLatestCommittedOffsetToken();
-        logger.info(String.format("Replaying... last offset: %s", last_offset));
         if ((null == last_offset) || (0 == last_offset.length()))
             // Nothing to do
             return;
         String fname = token_to_fname(last_offset);
         int row = token_to_row(last_offset) + 1;
-        logger.info(String.format("replay_if_needed: fname='%s', row=%d", fname, row));
 
         // Replay partial file
         replay_file(fname, row);
 
         // for all files "later" than fname
-        logger.info(String.format("replay_if_needed: fname='%s', wal_prefix='%s'", fname, wal_prefix));
         int fname_idx = Integer.parseInt(fname.substring(wal_prefix.length() + 1));
         List<String> wal_fnames = get_wal_files(fname_idx);
         //   Replay full file
@@ -288,6 +287,45 @@ public class SnowpipeRestRepository {
         catch (IOException ioe) {
             // Error writing to WAL
         }
+    }
+
+    private CompletableFuture<Boolean> purge_file(String f) {
+        return CompletableFuture.supplyAsync(() -> 
+            {
+                try {
+                    File file = new File(wal_dir, f);
+                    Boolean b = file.delete();
+                    logger.info(String.format("Purging file %s: %s", f, b ? "success" : "failure"));
+                    return b;
+                }
+                catch (Exception e) {
+                    logger.info(String.format("Error purging file (%s)... skipping", f));
+                    return false;
+                }
+            }
+        );
+    }
+
+    private Optional<CompletableFuture<Boolean>> purge_old_log_files() {
+        String last_offset = channel.getLatestCommittedOffsetToken();
+        logger.info(String.format("purge_old_log_files: last_offset: '%s'", last_offset));
+        if ((null == last_offset) || (0 == last_offset.length()))
+            // Nothing to do
+            return Optional.empty();
+        String fname = token_to_fname(last_offset);
+        int fname_idx = Integer.parseInt(fname.substring(wal_prefix.length() + 1));
+        
+        List<String> purgable = Stream.of(new File(wal_dir).listFiles())
+                .map(File::getName)
+                .filter(wf -> (Integer.parseInt(wf.substring(wal_prefix.length())) < fname_idx))
+                .collect(Collectors.toList());
+        logger.info(String.format("purge_old_log_files: purgable: %s", purgable));
+
+        List<CompletableFuture<Boolean>> futures = purgable.stream().map(f -> purge_file(f)).toList();
+        CompletableFuture<Boolean> combinedFuture = CompletableFuture.allOf(futures.toArray(new CompletableFuture<?>[0]))
+            .thenApply(v -> futures.stream().map(CompletableFuture::join).reduce(true, (a,b) -> Boolean.logicalAnd(a,b)));  //.collect(Collectors.toList()));
+        
+        return Optional.of(combinedFuture);
     }
 
     public SnowpipeInsertResponse saveToSnowflake(String body) {
