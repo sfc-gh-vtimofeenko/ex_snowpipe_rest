@@ -205,7 +205,7 @@ public class SnowpipeRestWAL {
         catch (IOException ioe) {
             // Error writing to WAL
         }
-        return makeToken(wal_fname, cur_row);
+        return makeToken(wal_fname, cur_row - 1);
     }
 
     private CompletableFuture<Boolean> purge_file(String f) {
