@@ -27,6 +27,23 @@
           ...
         }:
         {
+          packages.default = pkgs.rustPlatform.buildRustPackage {
+            name = "perf-testing";
+
+            src = ./.;
+
+            buildInputs =
+              [ pkgs.openssl ]
+              ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
+                pkgs.libiconv
+                pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
+              ];
+            nativeBuildInputs = [
+              pkgs.openssl
+              pkgs.pkg-config
+            ];
+            cargoHash = "sha256-7Zdhv0NZ5Q2M6rw3xMsFD9DLBODPIBOmM+5hOndLxDk=";
+          };
           devshells.default = {
             commands = [
               {
