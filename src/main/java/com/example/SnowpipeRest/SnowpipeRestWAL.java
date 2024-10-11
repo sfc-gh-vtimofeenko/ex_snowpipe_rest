@@ -240,7 +240,7 @@ public class SnowpipeRestWAL {
                 .collect(Collectors.toList());
         logger.info(String.format("purge_old_log_files: purgable: %s", purgable));
 
-        List<CompletableFuture<Boolean>> futures = purgable.stream().map(f -> purge_file(f)).toList();
+        List<CompletableFuture<Boolean>> futures = purgable.stream().map(f -> purge_file(f)).collect(Collectors.toList());
         CompletableFuture<Boolean> combinedFuture = CompletableFuture.allOf(futures.toArray(new CompletableFuture<?>[0]))
             .thenApply(v -> futures.stream().map(CompletableFuture::join).reduce(true, (a,b) -> Boolean.logicalAnd(a,b)));  //.collect(Collectors.toList()));
         
