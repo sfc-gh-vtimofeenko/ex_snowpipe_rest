@@ -69,7 +69,7 @@ def gen_data(args):
     outf = open(output, 'w')
 
     for idx in range(num_rows):
-        json.dump({k:gen[v]() for k,v in fields.items()}, outf)
+        json.dump([{k:gen[v]() for k,v in fields.items()}], outf)
         outf.write('\n')
 
 
