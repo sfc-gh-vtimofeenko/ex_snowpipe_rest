@@ -942,6 +942,7 @@ name = "perftest"
 version = "0.1.0"
 dependencies = [
  "goose",
+ "once_cell",
  "serde_json",
  "tokio",
 ]
