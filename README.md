@@ -227,3 +227,38 @@ by setting the `snowpiperest.wal.enable` parameter to `0`.
 You can set the directory into which all WAL files will be written by setting
 the `snowpiperest.wal.dir` parameter. It defaults to the `wal` subdirectory
 in the current working directory.
+
+## Data Generator
+This project includes a data generator that will generate lines of JSON data
+that are randomly generated values obeying a schema. The schema is specified 
+in an input file where each line contains the column name and the column type
+separated by a `:`. The valid types are: `VARCHAR`, `VARIANT` (which will just
+generate a string), `BOOLEAN`, `FLOAT`, `ARRAY` (which will be an array of strings), 
+`TIMESTAMP_NTZ`.
+
+For example:
+```
+GENERATEDTIME:TIMESTAMP_NTZ
+NAME:VARCHAR
+SOMETHING:VARIANT
+ITEMS:ARRAY
+YESNO:BOOLEAN
+HEIGHT:FLOAT
+```
+
+The values are random length and values:
+* `VARCHAR` - random string of letters and numbers between 50-100 characters
+* `VARIANT` - same as `VARCHAR`
+* `ARRAY` - array of length between 5 and 15 strings like `VARCHAR` 
+* `FLOAT` - floating point number between `-1000.0` and `1000.0`
+* `TIMESTAMP_NTX` - random datetime between `2024-01-01T00:00:00` and `2024-07-01T00:00:00`
+
+To run the data generator, run
+```bash
+python datagen/datagen.py --input <INPUT_SCHEMA> --output <OUTPUT_FILE> --num_rows <NUMBER_OF_ROWS>
+```
+
+Where
+* `INPUT_SCHEMA` is the input file per above
+* `OUTPUT_FILE` is the name of the file to create, one JSON string per line
+* `NUMBER_OF_ROWS` is the number of rows to generate
