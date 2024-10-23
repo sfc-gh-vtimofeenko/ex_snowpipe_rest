@@ -5,4 +5,5 @@ test/
 
 *.class
 *.jar
-*.toml
+# *.toml
+perf-testing/.envrc.local
