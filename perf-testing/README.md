@@ -34,7 +34,7 @@ Run following commands (replacing the placeholders in `,>`):
 ```
 docker build -t "ex_snowpipe_rest_perftest" .
 docker run -v <path_to_directory_with_test_file>:/app/data\
-    -e FIXTURE_PATH=/app/data/<test_file_name>
+    -e FIXTURE_PATH=/app/data/<test_file_name>\
     --network=host\
     ex_snowpipe_rest_perftest\
     /app/bin/perftest --host http://localhost:8080 --run-time 1m --no-reset-metrics
