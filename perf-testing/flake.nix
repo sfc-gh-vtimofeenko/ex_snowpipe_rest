@@ -42,7 +42,7 @@
               pkgs.openssl
               pkgs.pkg-config
             ];
-            cargoHash = "sha256-7Zdhv0NZ5Q2M6rw3xMsFD9DLBODPIBOmM+5hOndLxDk=";
+            cargoHash = "sha256-t1iIV79DDmuWYrhQ7uIjwiGTuzP0uwSlYeYbeu+0fXU=";
           };
           devshells.default = {
             commands = [
