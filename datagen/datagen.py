@@ -18,6 +18,9 @@ uni_max = 1000
 timeformat = '%Y-%m-%dT%I:%M:%p'
 start_datetime = datetime.datetime(2024,1,1,0,0,0)
 end_datetime = datetime.datetime(2024,7,1,0,0,0)
+reclen_min = 500
+reclen_max = 2000
+num_fields = 200
 
 
 def read_file(fname):
@@ -27,7 +30,10 @@ def read_file(fname):
         return {x.split(':')[0]:x.split(':')[1] for x in lines}
     except Exception as e:
         logging.error(f"Error reading file ({fname}): ", e)
-    
+
+def gen_variant():
+    return {'key': gen_string()}
+
 def gen_string():
     global strlen_min, strlen_max, chars
     len = random.randint(strlen_min, strlen_max)
@@ -36,7 +42,7 @@ def gen_string():
 def gen_array():
     global arylen_min, arylen_max
     len = random.randint(arylen_min, arylen_max)
-    return [gen_string() for x in range(len)]
+    return [gen_string() for _ in range(len)]
 
 def gen_boolean():
     return random.choice([True,False])
@@ -53,7 +59,7 @@ def gen_datetime():
 
 gen = {
     "VARCHAR": gen_string,
-    "VARIANT": gen_string,
+    "VARIANT": gen_variant,
     "BOOLEAN": gen_boolean,
     "FLOAT": gen_float,
     "ARRAY": gen_array,
@@ -69,7 +75,8 @@ def gen_data(args):
     outf = open(output, 'w')
 
     for idx in range(num_rows):
-        json.dump([{k:gen[v]() for k,v in fields.items()}], outf)
+        keys = random.sample(list(fields.keys()), num_fields)
+        json.dump([{k:gen[v]() for k,v in fields.items() if k in keys} for _ in range(random.randint(reclen_min, reclen_max))], outf)
         outf.write('\n')
 
 
