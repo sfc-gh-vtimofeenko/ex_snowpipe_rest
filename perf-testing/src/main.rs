@@ -45,7 +45,7 @@ async fn go_brrr(user: &mut GooseUser) -> TransactionResult {
 
     let fixture_data = Arc::clone(&FIXTURE_DATA);
 
-    let path = "/snowpipe/insert";
+    let path = "";
 
     let reqwest_builder = user
         .client
