@@ -26,4 +26,4 @@ WORKDIR /app
 # Copy /nix/store
 COPY --from=builder /tmp/nix-store-closure /nix/store
 COPY --from=builder /tmp/build/result /app
-CMD ["/app/bin/loadtest"]
+CMD ["/app/bin/perftest"]
